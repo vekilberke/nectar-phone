@@ -315,6 +315,7 @@ function Inbox({ link, snap }: { link: Link; snap: Snapshot }) {
       <ul className="inbox">
         {snap.inbox.map((i) => (
           <li key={i.id}>
+            {i.clip && <p className="meta">{i.copied ? t("inbox.clipCopied") : t("inbox.clip")}</p>}
             <p className="inbox-text">{i.text}</p>
             <div className="row end">
               <button className="btn small" onClick={() => link.dismissInbox(i.id)}>
@@ -685,7 +686,7 @@ function Pc({ link, perms, snap }: { link: Link; perms: Perms; snap: Snapshot })
   );
 }
 
-const PERM_KEYS: (keyof Perms)[] = ["media", "volume", "lock", "status", "mediaInfo", "agentStatus", "agentAsk", "clipboard", "textIn", "textOut", "filesIn", "filesOut", "openUrl"];
+const PERM_KEYS: (keyof Perms)[] = ["media", "volume", "lock", "status", "mediaInfo", "agentStatus", "agentAsk", "clipboard", "clipboardOut", "textIn", "textOut", "filesIn", "filesOut", "openUrl"];
 
 function SettingsDialog({ sheetRef, link, snap }: { sheetRef: React.Ref<HTMLDialogElement>; link: Link; snap: Snapshot }) {
   const [confirm, setConfirm] = useState(false);

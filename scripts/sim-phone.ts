@@ -8,7 +8,8 @@
 // Prints JSON lines: {op:"code"} for the PC to type, then one line per step, {op:"done"} at the end.
 // The steps: pairing, a command, status, text both ways, a file both ways, the ratchet, a
 // second session, then mailbox delivery both ways while the phone is closed ({op:"queued"},
-// the PC answers {op:"go"} once it has queued its own text).
+// the PC answers {op:"go"} once it has queued its own text). PC clipboard copies (T-016) come
+// once live after the PC's text and once through the mailbox.
 
 import { createInterface } from "node:readline";
 import config from "../relay.config.json";
@@ -16,7 +17,7 @@ import { b64u, unb64u, utf8 } from "../src/core/bytes";
 import { Link, type ReceivedFile, type Snapshot, type Store } from "../src/core/link";
 import { parseQr, type DeviceRecord } from "../src/core/protocol";
 import { type AuthSession, type Channel, Realtime, RelayBlobs, Rest } from "../src/core/relay";
-import { BlobError, type Blobs, type Dir, InlineCrypto, type XferError } from "../src/core/transfer";
+import { BlobError, type Blobs, type Dir, InlineCrypto, mboxPrefix, type XferError } from "../src/core/transfer";
 
 const [mode, url] = process.argv.slice(2);
 if ((mode !== "--relay" && mode !== "--stdio") || !url) {
@@ -189,8 +190,10 @@ else {
   out({ op: "res", cmd: "media.play_pause", r: await link.command("media.play_pause") });
   out({ op: "res", cmd: "status.get", r: await link.command("status.get") });
   out({ op: "res", cmd: "text", r: await link.sendText("hello from the pwa") });
-  const inbox = await waitFor((s) => s.inbox.length > 0, "text from the pc");
-  out({ op: "text", text: inbox.inbox[0].text });
+  const inbox = await waitFor((s) => s.inbox.some((i) => !i.clip), "text from the pc");
+  out({ op: "text", text: inbox.inbox.find((i) => !i.clip)!.text });
+  const live = await waitFor((s) => s.inbox.some((i) => i.clip), "live clipboard copy from the pc");
+  out({ op: "clip-live", text: live.inbox.find((i) => i.clip)!.text });
 
   // A file both ways over the live session.
   out({ op: "res", cmd: "file", r: await link.sendFile(new File([utf8("file from the pwa")], "sim note.txt", { type: "text/plain" })) });
@@ -214,6 +217,15 @@ else {
   await link.start();
   const mbox = await waitFor((s) => s.inbox.some((i) => i.text === "mailbox from the pc"), "mailbox text from the pc");
   out({ op: "mailbox", text: mbox.inbox.find((i) => i.text === "mailbox from the pc")!.text });
+  const clip = await waitFor((s) => s.inbox.some((i) => i.clip && i.text === "clip from the pc"), "mailbox clipboard copy from the pc");
+  out({ op: "clip-mailbox", text: "clip from the pc", clips: clip.inbox.filter((i) => i.clip).length });
+  // The inbox shows the text before the scan deletes the item (and the newest copy may come live
+  // first); a page stays open, the sim must wait.
+  {
+    const b = mode === "--relay" ? new RelayBlobs(config, () => store.auth!.accessToken) : new StdioBlobs();
+    const until = Date.now() + 15_000;
+    while ((await b.list(mboxPrefix(store.device!.topic, "c2p")).catch(() => ["?"])).length && Date.now() < until) await new Promise((r) => setTimeout(r, 300));
+  }
   link.stop();
   out({ op: "done" });
   process.exit(0);

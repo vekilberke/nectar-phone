@@ -102,6 +102,7 @@ export class DemoLink implements LinkApi {
   async start() {}
   stop() {}
   setVisible() {}
+  leave() {}
   reconnect() {
     this.set({ conn: "online" });
   }

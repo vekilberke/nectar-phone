@@ -16,6 +16,8 @@ export interface Perms {
   textIn?: boolean;
   filesOut?: boolean;
   textOut?: boolean;
+  /** Text copied on the PC comes here by itself (T-016). */
+  clipboardOut?: boolean;
   openUrl?: "off" | "ask" | "on";
 }
 
@@ -101,6 +103,11 @@ export type PcMessage =
   | { t: "status"; d: Status }
   | { t: "perms"; d: Perms }
   | { t: "text"; text: string }
+  /**
+   * Text copied on the PC; `at` is the PC's clock in milliseconds, so an older copy never replaces a newer one.
+   * `late`: sent at a session start for a copy made before it, so it is offered, never written.
+   */
+  | { t: "clip"; text: string; at: number; late?: true }
   | { t: "rekey"; ep: number }
   | { t: "bye" }
   | { t: "relink" }
@@ -180,6 +187,10 @@ export function parsePcMessage(v: Record<string, unknown>): PcMessage | null {
     }
     case "text":
       return typeof v.text === "string" && v.text.length > 0 && v.text.length <= MAX_TEXT ? { t: "text", text: v.text } : null;
+    case "clip":
+      return typeof v.text === "string" && v.text.length > 0 && v.text.length <= MAX_TEXT && typeof v.at === "number" && Number.isSafeInteger(v.at) && v.at >= 0
+        ? { t: "clip", text: v.text, at: v.at, ...(v.late === true ? { late: true as const } : {}) }
+        : null;
     case "rekey":
       return typeof v.ep === "number" && Number.isSafeInteger(v.ep) && v.ep > 0 ? { t: "rekey", ep: v.ep } : null;
     case "bye":

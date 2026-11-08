@@ -1,6 +1,6 @@
 # Nectar Remote (phone PWA)
 
-The phone side of Nectar's phone link: pair with the PC by scanning its QR code, then control media, volume and lock, answer Claude Code permission requests, and send text, links or the phone's clipboard to the PC. Everything is end-to-end encrypted; the Supabase relay only sees ciphertext. Design: `docs/phone-link-design.md` in the Nectar repository.
+The phone side of Nectar's phone link: pair with the PC by scanning its QR code, then control media, volume and lock, answer Claude Code permission requests, and send text, links or the phone's clipboard to the PC. Text copied on the PC can come to the phone by itself (when the PC turns it on) and lands on the phone clipboard while this page is open. Everything is end-to-end encrypted; the Supabase relay only sees ciphertext. Design: `docs/phone-link-design.md` in the Nectar repository.
 
 - `relay.config.json` is the one build config (relay ref, public key, PWA address). Nectar embeds the same file.
 - `test-vectors.json` is written by the Rust tests; `tests/vectors.test.ts` checks the PWA reproduces every value.

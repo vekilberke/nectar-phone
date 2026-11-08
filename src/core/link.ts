@@ -79,6 +79,10 @@ export interface InboxItem {
   id: number;
   text: string;
   at: number;
+  /** Copied on the PC (T-016); the inbox keeps only the newest such item. */
+  clip?: true;
+  /** Written to this phone's clipboard by itself. */
+  copied?: boolean;
 }
 
 export interface Snapshot {
@@ -115,6 +119,8 @@ export const TIMING = {
 const FILE_KEEP_MS = 24 * 3600_000;
 const PROCESSED_KEEP_SECS = 48 * 3600;
 const MAX_INCOMING = 4;
+/** A PC copy stamped further ahead of this phone's clock than this is not trusted to order later copies. */
+const CLIP_SKEW_MS = 5 * 60_000;
 const MAX_LISTED = 12;
 
 type Answer = { t: "accept" } | { t: "saved" } | { t: "reject"; e: string };
@@ -131,6 +137,8 @@ export interface LinkOptions {
   blobs?: (token: () => string) => Blobs;
   /** Hashing, encryption and the received-file shelf (Web Worker + OPFS in the browser). */
   files?: FileCrypto & FileShelf;
+  /** Writes PC clipboard text to this phone's clipboard; false when the page may not (hidden, not focused, no permission). */
+  clipboard?: { write(text: string): Promise<boolean> };
 }
 
 class Revoked extends Error {}
@@ -169,6 +177,12 @@ export class Link {
   private processed: Record<string, number> = {};
   private scanning = false;
   private tmpId = 0;
+  /** The newest PC copy seen (PC clock in ms, text), the `at` below which a copy is older, and the inbox id about to be written. */
+  private clipAt = -1;
+  private clipText = "";
+  private clipFloor = -1;
+  private clipAuto: number | null = null;
+  private clipWrites: Promise<void> = Promise.resolve();
 
   constructor(private readonly o: LinkOptions) {
     this.t = { ...TIMING, ...o.timing };
@@ -252,6 +266,19 @@ export class Link {
     } else {
       this.wake?.();
     }
+  }
+
+  /**
+   * The page is going away (closed, reloaded or put in the back-forward cache): tells the PC,
+   * so its later copies wait in the mailbox instead of going to a session nobody reads. Not on
+   * every hide: transfers and a quick switch back keep the session.
+   */
+  leave() {
+    if (!this.send({ t: "bye" })) return;
+    this.endSession();
+    if (this.hsTimer) clearTimeout(this.hsTimer);
+    this.hsTimer = null;
+    this.setConn("ended");
   }
 
   reconnect() {
@@ -528,6 +555,9 @@ export class Link {
           const inner = openMailbox(keyFor, d.topic, "c2p", unhex(fid)!, bytes, Math.floor(this.now() / 1000));
           if (inner?.t === "text" && typeof inner.text === "string" && inner.text && inner.text.length <= MAX_TEXT) {
             this.set({ inbox: [{ id: ++this.inboxId, text: inner.text, at: this.now() }, ...this.snap.inbox].slice(0, 20) });
+          } else if (inner?.t === "clip") {
+            const m = parsePcMessage(inner);
+            if (m?.t === "clip") this.takeClip(m.text, m.at, false);
           } else if (inner?.t === "offer") {
             const r = this.checkOffer(inner);
             if ("plan" in r && r.plan.fidHex === fid) {
@@ -559,6 +589,43 @@ export class Link {
     }
   }
 
+  /**
+   * PC clipboard text: replaces the older one in the inbox. Only a copy made while this page was
+   * open (`fresh`) is written to the phone clipboard, once, as it arrives; a copy that waited
+   * (mailbox, hidden page, sent again at a session start) is offered, since the phone clipboard
+   * may hold something newer by then.
+   */
+  private takeClip(text: string, at: number, fresh: boolean) {
+    // The same copy again (the PC resends one the phone may not have got): shown once, and a
+    // dismissed one stays gone.
+    if (at === this.clipAt && text === this.clipText) return;
+    if (at < this.clipFloor) return;
+    this.clipAt = at;
+    this.clipText = text;
+    // A PC clock far ahead (later corrected) must not hide every copy after it.
+    this.clipFloor = at <= this.now() + CLIP_SKEW_MS ? at : this.now();
+    const item: InboxItem = { id: ++this.inboxId, text, at: this.now(), clip: true };
+    this.clipAuto = fresh && this.visible ? item.id : null;
+    this.set({ inbox: [item, ...this.snap.inbox.filter((i) => !i.clip)].slice(0, 20) });
+    if (this.clipAuto !== null) void this.writeClip();
+  }
+
+  /** One write at a time, each for the newest copy when its turn comes, so an older write cannot finish last. */
+  private writeClip() {
+    this.clipWrites = this.clipWrites.then(() => this.writeClipNow()).catch(() => {});
+    return this.clipWrites;
+  }
+
+  private async writeClipNow() {
+    const item = this.snap.inbox.find((i) => i.clip);
+    const cb = this.o.clipboard;
+    if (!item || !cb || this.clipAuto !== item.id) return;
+    // One try: a refused copy stays offered with Copy.
+    this.clipAuto = null;
+    if (!this.visible || !(await cb.write(item.text).catch(() => false))) return;
+    this.set({ inbox: this.snap.inbox.map((i) => (i.id === item.id ? { ...i, copied: true } : i)) });
+  }
+
   dismissInbox(id: number) {
     this.set({ inbox: this.snap.inbox.filter((i) => i.id !== id) });
   }
@@ -571,6 +638,9 @@ export class Link {
     }
     this.stop();
     this.device = null;
+    this.clipAt = this.clipFloor = -1;
+    this.clipText = "";
+    this.clipAuto = null;
     await this.o.store.saveDevice(null);
     for (const f of this.snap.files) await this.o.files?.remove(f.fid).catch(() => {});
     await this.o.store.saveFiles([]).catch(() => {});
@@ -893,6 +963,9 @@ export class Link {
       case "text":
         this.set({ inbox: [{ id: ++this.inboxId, text: msg.text, at: this.now() }, ...this.snap.inbox].slice(0, 20) });
         return;
+      case "clip":
+        this.takeClip(msg.text, msg.at, !msg.late);
+        return;
       case "rekey": {
         // Only the current session may ratchet, and the key is stored before `rekeyed` goes out.
         const next = s.nextKey(msg.ep);
@@ -1023,6 +1096,7 @@ export type LinkApi = Pick<
   | "start"
   | "stop"
   | "setVisible"
+  | "leave"
   | "reconnect"
   | "command"
   | "sendText"

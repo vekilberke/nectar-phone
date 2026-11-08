@@ -28,6 +28,17 @@ function shortUa(): string {
   return [os ? `Android ${os}` : "", chrome ? `Chrome ${chrome}` : ""].filter(Boolean).join(", ") || "Browser";
 }
 
+/** Chrome lets a focused, visible page write the clipboard without a tap; anything else is refused. */
+async function writeClipboard(text: string): Promise<boolean> {
+  if (document.visibilityState !== "visible" || !document.hasFocus() || !navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const real = () =>
   new Link({
     store: new IdbStore(),
@@ -37,6 +48,7 @@ const real = () =>
     onPaired: () => void navigator.storage?.persist?.().catch(() => {}),
     blobs: (token) => new RelayBlobs(config, token),
     files: browserFiles(),
+    clipboard: { write: writeClipboard },
   });
 
 // The demo build (VITE_DEMO=1) shows canned screens; production builds drop this branch.
@@ -44,6 +56,8 @@ const demo = import.meta.env.VITE_DEMO === "1" ? new URLSearchParams(location.se
 const link: LinkApi = demo ? new (await import("./demo")).DemoLink(demo) : real();
 
 document.addEventListener("visibilitychange", () => link.setVisible(document.visibilityState === "visible"));
+addEventListener("pagehide", () => link.leave());
+addEventListener("pageshow", (e) => e.persisted && link.setVisible(document.visibilityState === "visible"));
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   const register = () => void navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
