@@ -379,3 +379,16 @@ test("a copy with an older mailbox time but a newer at still wins over the earli
   expect(clipboard.written.at(-1)).toBe("second");
   link.stop();
 });
+
+test("a permission change on the PC reaches the open page without a reload (T-024)", async () => {
+  const { link, pc, clipboard } = await paired();
+  pc.seal({ t: "evt", op: "perms", d: { textOut: true, clipboardOut: false } });
+  await until(() => link.snapshot().device?.perms.clipboardOut === false);
+  pc.seal({ t: "evt", op: "perms", d: { textOut: true, clipboardOut: true } });
+  await until(() => link.snapshot().device?.perms.clipboardOut === true);
+  expect(link.snapshot().conn).toBe("online");
+  pc.seal({ t: "clip", text: "after the grant", at: 300 });
+  await until(() => clips(link)[0]?.copied === true);
+  expect(clipboard.written).toEqual(["after the grant"]);
+  link.stop();
+});

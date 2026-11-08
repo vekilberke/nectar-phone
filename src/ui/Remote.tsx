@@ -712,6 +712,7 @@ function SettingsDialog({ sheetRef, link, snap }: { sheetRef: React.Ref<HTMLDial
           <li key={k}>{t(`perm.${k}` as Key)}</li>
         ))}
       </ul>
+      {!d.perms.clipboardOut && <p className="faint">{t("settings.clipOff")}</p>}
       <p className="faint">{t("unpaired.privacy")}</p>
       {confirm ? (
         <>
